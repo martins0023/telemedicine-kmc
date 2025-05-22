@@ -17,36 +17,45 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
     const { ConsultationsCollection } = await connectToDatabase();
     const normalizedRoomName = normalizeRoomName(data.roomName);
 
-    const existingConsultation = await ConsultationsCollection.findOne({ normalizedRoomName });
-    if (existingConsultation) {
+    // Check using the MongoDB collection type which expects _id and Date for createdAt
+    const existingConsultationDoc = await ConsultationsCollection.findOne({ normalizedRoomName });
+    if (existingConsultationDoc) {
       return { success: false, error: "Room name already exists. Please choose a unique name." };
     }
 
-    const newConsultationDocument: Omit<Consultation, '_id' | 'id'> = {
+    // Data to be inserted into MongoDB
+    const newConsultationDbData = {
       hostName: data.hostName,
-      roomName: data.roomName, // Store original casing for display if needed, but query by normalized
+      roomName: data.roomName,
       normalizedRoomName: normalizedRoomName,
       date: format(data.date, 'yyyy-MM-dd'),
       startTime: data.startTime,
       endTime: data.endTime,
-      clients: data.clientEmails.split(',').map(email => ({ email: email.trim().toLowerCase() })), // Store client emails in lowercase
-      createdAt: new Date(),
+      clients: data.clientEmails.split(',').map(email => ({ email: email.trim().toLowerCase() })),
+      createdAt: new Date(), // Store as Date object in MongoDB
     };
 
-    const result = await ConsultationsCollection.insertOne(newConsultationDocument);
+    const result = await ConsultationsCollection.insertOne(newConsultationDbData);
     
     if (!result.insertedId) {
         return { success: false, error: "Failed to schedule consultation in database." };
     }
 
-    const createdConsultation: Consultation = {
-        ...newConsultationDocument,
-        _id: result.insertedId,
-        id: result.insertedId.toHexString(),
+    // Data to be returned to the client (must be serializable)
+    const createdConsultationForClient: Consultation = {
+        hostName: newConsultationDbData.hostName,
+        roomName: newConsultationDbData.roomName,
+        normalizedRoomName: newConsultationDbData.normalizedRoomName,
+        date: newConsultationDbData.date,
+        startTime: newConsultationDbData.startTime,
+        endTime: newConsultationDbData.endTime,
+        clients: newConsultationDbData.clients,
+        createdAt: newConsultationDbData.createdAt.toISOString(), // Convert Date to string
+        id: result.insertedId.toHexString(), // Convert ObjectId to string
     };
 
     const joinLink = `/consult/${normalizedRoomName}`;
-    return { success: true, consultation: createdConsultation, joinLink };
+    return { success: true, consultation: createdConsultationForClient, joinLink };
 
   } catch (error) {
     console.error("Error in scheduleConsultation:", error);
@@ -59,18 +68,26 @@ export async function getConsultationDetails(roomName: string): Promise<Consulta
     const { ConsultationsCollection } = await connectToDatabase();
     const normalizedSearchRoomName = normalizeRoomName(roomName);
     
+    // consultationDoc is the raw document from MongoDB
     const consultationDoc = await ConsultationsCollection.findOne({ normalizedRoomName: normalizedSearchRoomName });
     if (!consultationDoc) {
       return null;
     }
-    // Convert _id to string id
-    const consultation: Consultation = {
-        ...consultationDoc,
-        id: consultationDoc._id?.toHexString(),
-        // Ensure date is string formatted if it's a Date object from DB
+
+    // Transform to the client-safe Consultation type
+    const consultationForClient: Consultation = {
+        hostName: consultationDoc.hostName,
+        roomName: consultationDoc.roomName,
+        normalizedRoomName: consultationDoc.normalizedRoomName,
+        // Ensure date is string formatted if it's a Date object from DB (though it should be string based on insertion)
         date: typeof consultationDoc.date === 'string' ? consultationDoc.date : format(consultationDoc.date as Date, 'yyyy-MM-dd'),
+        startTime: consultationDoc.startTime,
+        endTime: consultationDoc.endTime,
+        clients: consultationDoc.clients.map(c => ({ email: c.email, name: c.name })), 
+        id: consultationDoc._id.toHexString(), // Convert ObjectId to string id
+        createdAt: consultationDoc.createdAt.toISOString(), // Convert Date to ISO string
     };
-    return consultation;
+    return consultationForClient;
   } catch (error) {
     console.error("Error in getConsultationDetails:", error);
     return null;
@@ -115,10 +132,7 @@ export async function updateClientName(roomName: string, email: string, name: st
     if (result.matchedCount === 0) {
       return { success: false, error: "Consultation or client not found." };
     }
-    if (result.modifiedCount === 0) {
-      // This could mean the name was already set to the same value
-      return { success: true }; // Or a specific message if preferred
-    }
+    // No need to check modifiedCount specifically, if matched and no error, it's okay.
     return { success: true };
   } catch (error) {
     console.error("Error in updateClientName:", error);
@@ -136,14 +150,15 @@ export async function extendConsultationTime(roomName: string, minutes: number):
       return { success: false, error: "Consultation not found." };
     }
     
-    // Parse current end time. Date part is from consultation.date.
+    // consultation.date is already a string 'yyyy-MM-dd'
+    // consultation.endTime is 'HH:mm'
     const currentEndDateTime = parseISO(`${consultation.date}T${consultation.endTime}:00`);
     
     const newEndDateTime = new Date(currentEndDateTime.getTime() + minutes * 60000);
     const newEndTimeStr = format(newEndDateTime, 'HH:mm');
 
     const result = await ConsultationsCollection.updateOne(
-      { _id: consultation._id },
+      { _id: consultation._id }, // Use _id for update operations
       { $set: { endTime: newEndTimeStr } }
     );
 
@@ -161,14 +176,11 @@ export async function extendConsultationTime(roomName: string, minutes: number):
 export async function completeTwilioRoom(roomName: string): Promise<{ success: boolean; error?: string }> {
   const normalizedRoomNameToComplete = normalizeRoomName(roomName);
   try {
-    // In a real scenario, you might want to mark the consultation as completed in your DB here as well.
-    // For now, this function only interacts with the Twilio API endpoint.
-    
-    // Example: Update consultation status in MongoDB
+    // Potentially update consultation status in MongoDB here
     // const { ConsultationsCollection } = await connectToDatabase();
     // await ConsultationsCollection.updateOne(
     //   { normalizedRoomName: normalizedRoomNameToComplete },
-    //   { $set: { status: "completed" } } // Assuming you add a 'status' field
+    //   { $set: { status: "completed" } } 
     // );
 
     const response = await fetch(`/api/twilio/room/complete`, {

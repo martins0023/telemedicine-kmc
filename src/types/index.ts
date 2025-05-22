@@ -6,16 +6,16 @@ export interface Client {
 }
 
 export interface Consultation {
-  _id?: ObjectId; // MongoDB identifier
-  id?: string; // string version of _id, can be used for convenience if needed
+  // _id?: ObjectId; // Removed: ObjectId is not serializable for client components
+  id: string; // Use string id for client-side
   hostName: string;
-  roomName: string; // This will be stored and queried in lowercase
-  normalizedRoomName: string; // Explicitly store lowercase for querying
-  date: string; // Store as ISO string (YYYY-MM-DD) or Date object for easier querying
-  startTime: string; // "HH:MM"
-  endTime: string; // "HH:MM"
+  roomName: string; 
+  normalizedRoomName: string; 
+  date: string; 
+  startTime: string; 
+  endTime: string; 
   clients: Client[];
-  createdAt?: Date;
+  createdAt: string; // Changed to string for serializability
 }
 
 // Mock consultation data structure is no longer primary, but kept for reference or if needed later
