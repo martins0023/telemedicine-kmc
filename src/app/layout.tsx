@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Telemed Consult',
-  description: 'Secure telehealth video consultation platform.',
+  title: 'KMC Telehealth with Doctor kays | Health without boarder',
+  description: 'Doctor kays | Experience reliable and efficient healthcare services with Doctor Kays. Book appointments, consult specialists, and explore personalized solutions.',
 };
 
 export default function RootLayout({
