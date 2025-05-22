@@ -5,9 +5,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Users, MessageSquare, Loader2, CameraOff } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Users, MessageSquare, Loader2, CameraOff, AlertTriangle } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { connect, createLocalVideoTrack, Room, LocalTrack, LocalVideoTrack, RemoteParticipant, RemoteTrack, RemoteTrackPublication } from 'twilio-video';
+import TwilioVideo, { connect, createLocalVideoTrack, Room, LocalTrack, LocalVideoTrack, RemoteParticipant, RemoteTrack, LocalAudioTrack } from 'twilio-video';
 import { useToast } from "@/hooks/use-toast";
 
 type VideoComponentPlaceholderProps = {
@@ -21,12 +21,14 @@ type VideoComponentPlaceholderProps = {
 export function VideoComponentPlaceholder({ roomName, token, identity, isHost, onLeaveCall }: VideoComponentPlaceholderProps) {
   const [room, setRoom] = useState<Room | null>(null);
   const [localVideoTrack, setLocalVideoTrack] = useState<LocalVideoTrack | null>(null);
+  const [localAudioTrack, setLocalAudioTrack] = useState<LocalAudioTrack | null>(null);
+  
   const [remoteParticipants, setRemoteParticipants] = useState<Map<string, RemoteParticipant>>(new Map());
   
   const [isMicMuted, setIsMicMuted] = useState(false);
-  const [isVidOff, setIsVidOff] = useState(true); // Start with video off initially
+  const [isVidOff, setIsVidOff] = useState(false); 
   const [isConnecting, setIsConnecting] = useState(true);
-  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // null: checking, true: granted, false: denied
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideosRef = useRef<HTMLDivElement>(null);
@@ -35,34 +37,39 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
   const cleanupTracks = useCallback(() => {
     if (localVideoTrack) {
       localVideoTrack.stop();
+      if (room?.localParticipant) {
+        room.localParticipant.unpublishTrack(localVideoTrack);
+      }
       setLocalVideoTrack(null);
     }
-    room?.localParticipant.tracks.forEach(publication => {
-      publication.track.stop();
-      room.localParticipant.unpublishTrack(publication.track);
-    });
-  }, [localVideoTrack, room]);
+    if (localAudioTrack) {
+      localAudioTrack.stop();
+       if (room?.localParticipant) {
+        room.localParticipant.unpublishTrack(localAudioTrack);
+      }
+      setLocalAudioTrack(null);
+    }
+  }, [localVideoTrack, localAudioTrack, room]);
 
+
+  // Request media permissions first
   useEffect(() => {
-    const getCameraPermissionAndSetup = async () => {
+    const getMediaPermissions = async () => {
       try {
-        // Check for MediaDevices support
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          toast({ variant: 'destructive', title: 'Unsupported Browser', description: 'Your browser does not support camera access.' });
+          toast({ variant: 'destructive', title: 'Unsupported Browser', description: 'Your browser does not support camera/microphone access.' });
           setHasCameraPermission(false);
           setIsConnecting(false);
           return;
         }
-        // Request permission
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        // Stop the tracks immediately as Twilio will create its own
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(track => track.stop()); // Stop immediately, Twilio will manage tracks
         setHasCameraPermission(true);
-        setIsVidOff(false); // If permission granted, turn video on by default
+        setIsVidOff(false); // Default to video on if permission granted
       } catch (error) {
         console.error('Error accessing camera/microphone:', error);
         setHasCameraPermission(false);
-        setIsVidOff(true);
+        setIsVidOff(true); // Keep video off if permission denied
         toast({
           variant: 'destructive',
           title: 'Media Access Denied',
@@ -70,130 +77,154 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
         });
       }
     };
-    getCameraPermissionAndSetup();
+    getMediaPermissions();
   }, [toast]);
 
 
+  // Connect to Twilio room
   useEffect(() => {
-    if (token && roomName && hasCameraPermission !== null) { // Only connect if token, roomName, and permission status is known
-      setIsConnecting(true);
-      connect(token, {
-        name: roomName,
-        audio: true,
-        video: hasCameraPermission ? { width: 640 } : false, // Only request video if permission was granted
-      }).then(async (connectedRoom) => {
-        setRoom(connectedRoom);
-        setIsConnecting(false);
+    if (!token || !roomName || hasCameraPermission === null) {
+      // Don't attempt to connect until token, roomName are available AND permission check is complete
+      return;
+    }
 
-        // Attach local video if permission was granted and track exists
+    setIsConnecting(true);
+
+    const connectToRoom = async () => {
+      try {
+        const audioTrack = await TwilioVideo.createLocalAudioTrack();
+        setLocalAudioTrack(audioTrack);
+        
+        let videoTrack: LocalVideoTrack | null = null;
         if (hasCameraPermission) {
-            try {
-                const videoTrack = await createLocalVideoTrack({ width: 640 });
-                setLocalVideoTrack(videoTrack);
-                if (localVideoRef.current) {
-                    videoTrack.attach(localVideoRef.current);
-                }
-                connectedRoom.localParticipant.publishTrack(videoTrack);
-            } catch (e) {
-                console.error("Failed to create or publish local video track:", e);
-                toast({ variant: "destructive", title: "Video Error", description: "Could not start your video."});
-                setIsVidOff(true);
+          try {
+            videoTrack = await TwilioVideo.createLocalVideoTrack({ width: 640 });
+            setLocalVideoTrack(videoTrack);
+             if (localVideoRef.current && videoTrack) {
+              videoTrack.attach(localVideoRef.current);
             }
+          } catch (videoError) {
+             console.error("Failed to create local video track:", videoError);
+             toast({ variant: "destructive", title: "Video Error", description: "Could not start your video. Proceeding with audio only."});
+             setIsVidOff(true); // Ensure video is marked as off
+          }
+        } else {
+            setIsVidOff(true); // Ensure video is marked as off if no permission
         }
 
+        const tracksToPublish: LocalTrack[] = [audioTrack];
+        if (videoTrack) {
+          tracksToPublish.push(videoTrack);
+        }
+
+        const connectedRoom = await connect(token, {
+          name: roomName,
+          tracks: tracksToPublish,
+          dominantSpeaker: true, 
+        });
+
+        setRoom(connectedRoom);
+        setIsConnecting(false);
 
         // Handle existing participants
         const newRemoteParticipants = new Map(remoteParticipants);
         connectedRoom.participants.forEach(participant => {
           newRemoteParticipants.set(participant.sid, participant);
+          participant.on('trackSubscribed', track => handleTrackSubscribed(track, participant));
+          participant.on('trackUnsubscribed', track => handleTrackUnsubscribed(track, participant));
+           participant.tracks.forEach(publication => {
+            if (publication.isSubscribed && publication.track) {
+              handleTrackSubscribed(publication.track, participant);
+            }
+          });
         });
         setRemoteParticipants(newRemoteParticipants);
 
         // Participant connected
         connectedRoom.on('participantConnected', (participant) => {
-          console.log(\`Participant connected: \${participant.identity}\`);
+          console.log(`Participant connected: ${participant.identity}`);
           setRemoteParticipants(prev => new Map(prev).set(participant.sid, participant));
+          participant.on('trackSubscribed', track => handleTrackSubscribed(track, participant));
+          participant.on('trackUnsubscribed', track => handleTrackUnsubscribed(track, participant));
         });
 
         // Participant disconnected
         connectedRoom.on('participantDisconnected', (participant) => {
-          console.log(\`Participant disconnected: \${participant.identity}\`);
+          console.log(`Participant disconnected: ${participant.identity}`);
           setRemoteParticipants(prev => {
             const newMap = new Map(prev);
             newMap.delete(participant.sid);
             return newMap;
           });
           // Clean up video elements for this participant
-          const videoElement = document.getElementById(\`remote-video-\${participant.sid}\`);
-          if (videoElement) videoElement.remove();
-          const audioElement = document.getElementById(\`remote-audio-\${participant.sid}\`);
-          if (audioElement) audioElement.remove();
+          const participantContainer = document.getElementById(`participant-${participant.sid}`);
+          if (participantContainer) participantContainer.remove();
         });
         
-        // Handle tracks for remote participants
-        connectedRoom.participants.forEach(participant => {
-          participant.on('trackSubscribed', track => handleTrackSubscribed(track, participant));
-          participant.on('trackUnsubscribed', track => handleTrackUnsubscribed(track, participant));
-          participant.tracks.forEach(publication => {
-            if (publication.isSubscribed && publication.track) {
-              handleTrackSubscribed(publication.track, participant);
-            }
-          });
-        });
-        connectedRoom.on('participantConnected', participant => {
-            participant.on('trackSubscribed', track => handleTrackSubscribed(track, participant));
-            participant.on('trackUnsubscribed', track => handleTrackUnsubscribed(track, participant));
-        });
-
-
-      }).catch(error => {
-        console.error('Could not connect to Twilio:', error);
-        toast({ variant: "destructive", title: "Connection Failed", description: \`Could not connect to the room: \${error.message}\` });
-        setIsConnecting(false);
-      });
-
-      return () => {
-        cleanupTracks();
-        if (room) {
-          room.disconnect();
+        connectedRoom.on('disconnected', () => {
+          console.log('Disconnected from room');
+          cleanupTracks();
           setRoom(null);
-        }
-      };
-    }
+          setRemoteParticipants(new Map());
+           if (onLeaveCall) { // Ensure onLeaveCall is only called when the room is fully disconnected.
+            onLeaveCall();
+          }
+        });
+
+
+      } catch (error: any) {
+        console.error('Could not connect to Twilio or create tracks:', error);
+        toast({ variant: "destructive", title: "Connection Failed", description: `Could not connect to the room: ${error.message}` });
+        setIsConnecting(false);
+        cleanupTracks(); // Clean up any tracks that might have been created
+      }
+    };
+
+    connectToRoom();
+
+    return () => {
+      if (room) {
+        room.disconnect();
+      }
+      cleanupTracks();
+      setRoom(null);
+      setRemoteParticipants(new Map());
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, roomName, hasCameraPermission, toast]); // Removed cleanupTracks and room from deps to avoid cycle, handle cleanup explicitly.
+  }, [token, roomName, hasCameraPermission]); // Dependencies updated
 
   const handleTrackSubscribed = (track: RemoteTrack, participant: RemoteParticipant) => {
-    const elementId = \`\${track.kind}-\${participant.sid}\`;
-    let element = document.getElementById(elementId) as HTMLVideoElement | HTMLAudioElement | null;
-
-    if (!element) {
-      element = track.attach();
-      element.id = elementId;
-      
-      const participantContainerId = \`participant-\${participant.sid}\`;
-      let participantContainer = document.getElementById(participantContainerId);
-      
-      if (!participantContainer && remoteVideosRef.current) {
-          participantContainer = document.createElement('div');
-          participantContainer.id = participantContainerId;
-          participantContainer.className = "rounded-lg bg-foreground/5 flex flex-col items-center justify-center aspect-video relative overflow-hidden p-1";
-          
-          const nameBadge = document.createElement('span');
-          nameBadge.className = "absolute bottom-1 left-1 text-xs bg-black/50 text-white px-1 rounded";
-          nameBadge.innerText = participant.identity;
-          participantContainer.appendChild(nameBadge);
-          
-          remoteVideosRef.current.appendChild(participantContainer);
-      }
-      
-      if (participantContainer && element.tagName.toLowerCase() === 'video') {
+    const participantContainerId = `participant-${participant.sid}`;
+    let participantContainer = document.getElementById(participantContainerId);
+    
+    if (!participantContainer && remoteVideosRef.current) {
+        participantContainer = document.createElement('div');
+        participantContainer.id = participantContainerId;
+        participantContainer.className = "rounded-lg bg-foreground/5 flex flex-col items-center justify-center aspect-video relative overflow-hidden p-1 shadow-md";
+        
+        const nameBadge = document.createElement('span');
+        nameBadge.className = "absolute bottom-1 left-1 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded";
+        nameBadge.innerText = participant.identity;
+        participantContainer.appendChild(nameBadge);
+        
+        remoteVideosRef.current.appendChild(participantContainer);
+    }
+    
+    if (participantContainer) {
+      const element = track.attach();
+      element.id = `${track.kind}-${participant.sid}`;
+      if (track.kind === 'video') {
         element.style.width = '100%';
         element.style.height = '100%';
         element.style.objectFit = 'cover';
+        // Ensure no duplicate video elements
+        const existingVideo = participantContainer.querySelector('video');
+        if (existingVideo) existingVideo.remove();
         participantContainer.prepend(element); // Prepend to show video first
-      } else if (participantContainer) {
-        // Audio elements are not visible, just attach them
+      } else {
+         // Ensure no duplicate audio elements
+        const existingAudio = participantContainer.querySelector('audio');
+        if (existingAudio) existingAudio.remove();
         participantContainer.appendChild(element);
       }
     }
@@ -201,61 +232,63 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
 
   const handleTrackUnsubscribed = (track: RemoteTrack, participant: RemoteParticipant) => {
     track.detach().forEach(element => element.remove());
-    const participantContainer = document.getElementById(\`participant-\${participant.sid}\`);
-    // If no more video tracks for this participant, remove the container
-    let hasVideo = false;
-    participant.videoTracks.forEach(pub => { if(pub.isTrackSubscribed) hasVideo = true; });
-    if (!hasVideo && participantContainer && !participantContainer.querySelector('video')) {
-        participantContainer.remove();
+    const participantContainer = document.getElementById(`participant-${participant.sid}`);
+    
+    // If it's a video track and there are no other video tracks for this participant, remove the container.
+    // Audio tracks don't necessitate a visual container on their own.
+    if (track.kind === 'video') {
+        let hasOtherVideoTracks = false;
+        participant.videoTracks.forEach(publication => {
+            if (publication.isTrackSubscribed && publication.trackSid !== track.sid) {
+                hasOtherVideoTracks = true;
+            }
+        });
+        if (!hasOtherVideoTracks && participantContainer && !participantContainer.querySelector('video')) {
+            participantContainer.remove();
+        }
     }
   };
 
   const handleLeaveRoom = () => {
-    cleanupTracks();
     if (room) {
-      room.disconnect();
-      setRoom(null);
-    }
-    if (onLeaveCall) {
+      room.disconnect(); // This will trigger the 'disconnected' event which handles cleanup and onLeaveCall
+    } else if (onLeaveCall) {
+      // If room wasn't even connected properly, but user wants to leave this component's view
       onLeaveCall();
     }
   };
 
   const toggleMute = () => {
-    if (!room) return;
-    const localAudioTrack = Array.from(room.localParticipant.audioTracks.values())[0]?.track;
-    if (localAudioTrack) {
-      if (localAudioTrack.isEnabled) {
-        localAudioTrack.disable();
-        setIsMicMuted(true);
-      } else {
-        localAudioTrack.enable();
-        setIsMicMuted(false);
-      }
+    if (!localAudioTrack) return;
+    if (localAudioTrack.isEnabled) {
+      localAudioTrack.disable();
+      setIsMicMuted(true);
+    } else {
+      localAudioTrack.enable();
+      setIsMicMuted(false);
     }
   };
 
  const toggleVideo = async () => {
-    if (!room || hasCameraPermission === false) {
-        if(hasCameraPermission === false) {
-             toast({ variant: "destructive", title: "Camera Disabled", description: "Camera permission is not granted."});
-        }
+    if (hasCameraPermission === false) {
+         toast({ variant: "destructive", title: "Camera Disabled", description: "Camera permission is not granted."});
         return;
     }
+    if (!room) return;
 
-    const currentVideoTrack = localVideoTrack;
-
-    if (currentVideoTrack && !isVidOff) { // Video is ON, turn it OFF
-      currentVideoTrack.stop();
-      room.localParticipant.unpublishTrack(currentVideoTrack);
+    if (localVideoTrack && !isVidOff) { // Video is ON, turn it OFF
+      room.localParticipant.unpublishTrack(localVideoTrack);
+      localVideoTrack.stop();
       setLocalVideoTrack(null);
       setIsVidOff(true);
-      if (localVideoRef.current) { // Clear the srcObject
+      if (localVideoRef.current) { 
           localVideoRef.current.srcObject = null;
+          const tracks = (localVideoRef.current.srcObject as MediaStream)?.getVideoTracks();
+          tracks?.forEach(track => track.stop());
       }
     } else { // Video is OFF, turn it ON
       try {
-        const newVideoTrack = await createLocalVideoTrack({ width: 640 });
+        const newVideoTrack = await TwilioVideo.createLocalVideoTrack({ width: 640 });
         setLocalVideoTrack(newVideoTrack);
         if (localVideoRef.current) {
           newVideoTrack.attach(localVideoRef.current);
@@ -271,7 +304,7 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
   };
 
 
-  if (isConnecting && hasCameraPermission === null) {
+  if (hasCameraPermission === null) { // Still checking permissions
     return (
       <Card className="w-full min-h-[400px] flex flex-col shadow-lg items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -280,7 +313,7 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
     );
   }
   
-  if (isConnecting) {
+  if (isConnecting && hasCameraPermission !== null) { // Permissions checked, now connecting
     return (
       <Card className="w-full min-h-[400px] flex flex-col shadow-lg items-center justify-center">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -291,61 +324,72 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
 
 
   return (
-    <Card className="w-full min-h-[500px] flex flex-col shadow-lg">
-      <CardHeader className="bg-muted/50 p-3 md:p-4 border-b">
-        <CardTitle className="text-md md:text-lg">Video Consultation: {roomName}</CardTitle>
-        <CardDescription className="text-xs md:text-sm">You are: <Badge variant={isHost ? "default" : "secondary"}>{identity}</Badge></CardDescription>
+    <Card className="w-full min-h-[500px] flex flex-col shadow-lg bg-background"> {/* Ensure card bg for contrast */}
+      <CardHeader className="bg-muted/30 p-3 md:p-4 border-b">
+        <CardTitle className="text-md md:text-lg text-foreground">Video Consultation: {roomName}</CardTitle>
+        <CardDescription className="text-xs md:text-sm text-muted-foreground">You are: <Badge variant={isHost ? "default" : "secondary"}>{identity}</Badge></CardDescription>
       </CardHeader>
       
-      <CardContent className="flex-1 p-2 md:p-4 grid grid-cols-1 md:grid-rows-[auto_1fr] gap-2 md:gap-4 overflow-auto bg-background">
+      <CardContent className="flex-1 p-2 md:p-4 grid grid-rows-[auto_1fr] gap-2 md:gap-4 overflow-hidden">
         {/* Local video area */}
-        <div className="md:row-start-1 md:col-start-1 rounded-lg bg-foreground/10 flex items-center justify-center aspect-video relative overflow-hidden min-h-[150px]">
+        <div className="row-start-1 rounded-lg bg-foreground/10 flex items-center justify-center aspect-video relative overflow-hidden min-h-[150px] shadow-inner">
           <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-          {isVidOff && (
-             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
-                <CameraOff size={48} className="text-white/70" />
-                <p className="text-white/70 text-sm mt-2">Your video is off</p>
+          {(isVidOff || !hasCameraPermission) && (
+             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
+                <CameraOff size={48} className="text-white/80" />
+                <p className="text-white/80 text-sm mt-2">
+                  {hasCameraPermission === false ? "Camera access denied" : "Your video is off"}
+                </p>
             </div>
           )}
-          <Badge className="absolute bottom-2 left-2 text-xs">{identity} (You)</Badge>
+          <Badge className="absolute bottom-2 left-2 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded">{identity} (You)</Badge>
         </div>
         
         {/* Remote participants grid */}
-        <div ref={remoteVideosRef} className="md:row-start-2 md:col-start-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-4">
+        <div ref={remoteVideosRef} className="row-start-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-4 overflow-y-auto pb-2">
           {/* Remote videos will be appended here by handleTrackSubscribed */}
-          {Array.from(remoteParticipants.values()).length === 0 && !isConnecting && (
-             <div className="col-span-full flex items-center justify-center text-muted-foreground h-full min-h-[100px]">
-                Waiting for others to join...
+          {Array.from(remoteParticipants.values()).length === 0 && !isConnecting && room && (
+             <div className="col-span-full flex flex-col items-center justify-center text-muted-foreground h-full min-h-[100px] p-4 rounded-md bg-muted/20">
+                <Users size={48} className="mb-2"/>
+                <p>Waiting for others to join...</p>
+                <p className="text-xs">Only connected participants will appear here.</p>
             </div>
           )}
+           {!room && !isConnecting && (
+             <div className="col-span-full flex flex-col items-center justify-center text-destructive h-full min-h-[100px] p-4 rounded-md bg-destructive/10">
+                <AlertTriangle size={48} className="mb-2"/>
+                <p>Not connected to the call.</p>
+                <p className="text-xs">There might be an issue with the connection or token.</p>
+            </div>
+           )}
         </div>
 
-         {hasCameraPermission === false && (
-            <Alert variant="destructive" className="md:row-start-3 md:col-span-full mt-2">
+         {hasCameraPermission === false && ( // Persistent banner if permissions were denied
+            <Alert variant="destructive" className="row-start-3 col-span-full mt-2">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Camera/Microphone Access Denied</AlertTitle>
               <AlertDescription>
-                Video and audio sharing is disabled. Please enable permissions in your browser settings and refresh.
+                Video and audio sharing is disabled. Please enable permissions in your browser settings and refresh the page.
               </AlertDescription>
             </Alert>
           )}
 
       </CardContent>
-      <div className="p-3 md:p-4 border-t bg-muted/50 flex justify-center items-center space-x-2 md:space-x-4">
-        <Button variant="outline" size="icon" onClick={toggleMute} aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"} disabled={!room || hasCameraPermission === false}>
+      <div className="p-3 md:p-4 border-t bg-muted/30 flex justify-center items-center space-x-2 md:space-x-4">
+        <Button variant="outline" size="icon" onClick={toggleMute} aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"} disabled={!room || !localAudioTrack || hasCameraPermission === false}>
           {isMicMuted ? <MicOff /> : <Mic />}
         </Button>
         <Button variant="outline" size="icon" onClick={toggleVideo} aria-label={isVidOff ? "Start Video" : "Stop Video"} disabled={!room || hasCameraPermission === false}>
           {isVidOff ? <VideoOff /> : <Video />}
         </Button>
         {/* Placeholder buttons - implement functionality as needed */}
-        <Button variant="outline" size="icon" aria-label="Show Participants" disabled={!room}>
+        <Button variant="outline" size="icon" aria-label="Show Participants (Placeholder)" disabled={!room}>
           <Users />
         </Button>
-        <Button variant="outline" size="icon" aria-label="Open Chat (Optional)" disabled={!room}>
+        <Button variant="outline" size="icon" aria-label="Open Chat (Placeholder)" disabled={!room}>
           <MessageSquare />
         </Button>
-        <Button variant="destructive" size="icon" onClick={handleLeaveRoom} aria-label="Leave Call" disabled={!room}>
+        <Button variant="destructive" size="icon" onClick={handleLeaveRoom} aria-label="Leave Call" disabled={!room && !isConnecting}>
           <PhoneOff />
         </Button>
       </div>
