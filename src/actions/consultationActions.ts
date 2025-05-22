@@ -10,7 +10,7 @@ let mockConsultations: MockConsultation[] = [
   {
     id: '1',
     hostName: 'Dr. Smith',
-    roomName: 'general-checkup-123',
+    roomName: 'general-checkup-123', // Will be treated as lowercase if this initial data is used for lookups
     date: '2024-08-15', // YYYY-MM-DD
     startTime: '10:00',
     endTime: '10:30',
@@ -22,18 +22,25 @@ let mockConsultations: MockConsultation[] = [
   }
 ];
 
+// Helper to normalize room names
+const normalizeRoomName = (name: string): string => {
+  return name.toLowerCase().trim();
+};
+
 export async function scheduleConsultation(data: ScheduleConsultationFormData) {
   await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
 
-  // Simulate unique room name check (basic)
-  if (mockConsultations.find(c => c.roomName === data.roomName)) {
+  const normalizedRoomName = normalizeRoomName(data.roomName);
+
+  // Simulate unique room name check (case-insensitive)
+  if (mockConsultations.find(c => c.roomName === normalizedRoomName)) {
     return { success: false, error: "Room name already exists. Please choose a unique name." };
   }
 
   const newConsultation: MockConsultation = {
     id: String(mockConsultations.length + 1),
     hostName: data.hostName,
-    roomName: data.roomName,
+    roomName: normalizedRoomName, // Store normalized room name
     date: format(data.date, 'yyyy-MM-dd'),
     startTime: data.startTime,
     endTime: data.endTime,
@@ -43,19 +50,21 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
 
   mockConsultations.push(newConsultation);
   
-  const joinLink = `/consult/${newConsultation.roomName}`; 
+  const joinLink = `/consult/${newConsultation.roomName}`; // Link will use normalized (lowercase) room name
   return { success: true, consultation: newConsultation, joinLink };
 }
 
 export async function getConsultationDetails(roomName: string): Promise<Consultation | null> {
   await new Promise(resolve => setTimeout(resolve, 500));
-  const consultation = mockConsultations.find(c => c.roomName === roomName);
+  const normalizedSearchRoomName = normalizeRoomName(roomName);
+  const consultation = mockConsultations.find(c => c.roomName === normalizedSearchRoomName);
   return consultation || null;
 }
 
 export async function verifyClientEmail(roomName: string, email: string): Promise<{ success: boolean; error?: string; clientName?: string }> {
   await new Promise(resolve => setTimeout(resolve, 500));
-  const consultation = mockConsultations.find(c => c.roomName === roomName);
+  const normalizedSearchRoomName = normalizeRoomName(roomName);
+  const consultation = mockConsultations.find(c => c.roomName === normalizedSearchRoomName);
   if (!consultation) {
     return { success: false, error: "Consultation not found." };
   }
@@ -68,7 +77,8 @@ export async function verifyClientEmail(roomName: string, email: string): Promis
 
 export async function updateClientName(roomName: string, email: string, name: string): Promise<{ success: boolean; error?: string }> {
   await new Promise(resolve => setTimeout(resolve, 500));
-  const consultationIndex = mockConsultations.findIndex(c => c.roomName === roomName);
+  const normalizedSearchRoomName = normalizeRoomName(roomName);
+  const consultationIndex = mockConsultations.findIndex(c => c.roomName === normalizedSearchRoomName);
   if (consultationIndex === -1) {
     return { success: false, error: "Consultation not found." };
   }
@@ -82,7 +92,8 @@ export async function updateClientName(roomName: string, email: string, name: st
 
 export async function extendConsultationTime(roomName: string, minutes: number): Promise<{ success: boolean; error?: string; newEndTime?: string }> {
   await new Promise(resolve => setTimeout(resolve, 1000));
-  const consultation = mockConsultations.find(c => c.roomName === roomName);
+  const normalizedSearchRoomName = normalizeRoomName(roomName);
+  const consultation = mockConsultations.find(c => c.roomName === normalizedSearchRoomName);
   if (!consultation) {
     return { success: false, error: "Consultation not found." };
   }
@@ -101,35 +112,36 @@ export async function extendConsultationTime(roomName: string, minutes: number):
 
 // Placeholder for completing a Twilio room
 // This function now directly calls the API route for completing a Twilio room.
+// The roomName passed here should be the one Twilio expects. 
+// Since we are normalizing room names to lowercase for our internal DB and for join links,
+// the roomName used to create/join Twilio rooms will also be lowercase.
 export async function completeTwilioRoom(roomName: string): Promise<{ success: boolean; error?: string }> {
+  const normalizedRoomNameToComplete = normalizeRoomName(roomName); // Ensure consistency if called externally with non-normalized name
   try {
-    // Assuming your Next.js app is running on the same domain or you have a full URL
-    // For server components/actions, you might need the full URL if calling from server-side outside of a request context.
-    // However, this action is likely called from client components, so relative path should be fine.
     const response = await fetch(`/api/twilio/room/complete`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ roomName }),
+      body: JSON.stringify({ roomName: normalizedRoomNameToComplete }), // Send normalized name
     });
 
     if (!response.ok) {
       const errorData = await response.json();
-      console.error(`Failed to complete Twilio room ${roomName}: ${response.status} - ${errorData.error || 'Unknown error'}`);
+      console.error(`Failed to complete Twilio room ${normalizedRoomNameToComplete}: ${response.status} - ${errorData.error || 'Unknown error'}`);
       return { success: false, error: errorData.error || `Failed to complete room: ${response.statusText}` };
     }
 
     const result = await response.json();
     if (result.success) {
-      console.log(`Successfully completed Twilio room: ${roomName}`);
+      console.log(`Successfully completed Twilio room: ${normalizedRoomNameToComplete}`);
       return { success: true };
     } else {
-      console.error(`API reported failure to complete Twilio room ${roomName}: ${result.message || result.error}`);
+      console.error(`API reported failure to complete Twilio room ${normalizedRoomNameToComplete}: ${result.message || result.error}`);
       return { success: false, error: result.message || result.error || "API call to complete room was not successful." };
     }
   } catch (error: any) {
-    console.error(`Error completing Twilio room ${roomName} via API call:`, error);
+    console.error(`Error completing Twilio room ${normalizedRoomNameToComplete} via API call:`, error);
     return { success: false, error: `Exception when trying to complete room: ${error.message}` };
   }
 }
