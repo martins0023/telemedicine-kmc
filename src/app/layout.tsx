@@ -33,7 +33,7 @@ export default function RootLayout({
             <Link href="/" className="mr-6 flex items-center space-x-2">
               <AppLogo className="h-6 w-6" />
               <span className="font-bold sm:inline-block">
-                Telemed Consult
+                KMC-TELEHEALTH Consult
               </span>
             </Link>
             {/* Add navigation items here if needed */}
