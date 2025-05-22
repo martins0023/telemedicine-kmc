@@ -1,3 +1,4 @@
+
 "use server";
 
 import type { ScheduleConsultationFormData } from '@/lib/schemas';
@@ -42,7 +43,7 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
 
   mockConsultations.push(newConsultation);
   
-  const joinLink = `/consult/${newConsultation.roomName}`; // Assuming domain is known or relative path
+  const joinLink = `/consult/${newConsultation.roomName}`; 
   return { success: true, consultation: newConsultation, joinLink };
 }
 
@@ -98,20 +99,37 @@ export async function extendConsultationTime(roomName: string, minutes: number):
   return { success: true, newEndTime: newEndTimeStr };
 }
 
-export async function generateTwilioToken(identity: string, roomName: string): Promise<{ success: boolean; token?: string; error?: string }> {
-  await new Promise(resolve => setTimeout(resolve, 500));
-  // In a real app, this would call the Twilio API
-  // For now, return a mock token
-  if (identity && roomName) {
-    return { success: true, token: `mock-twilio-token-for-${identity}-in-${roomName}` };
-  }
-  return { success: false, error: "Identity and room name are required." };
-}
-
 // Placeholder for completing a Twilio room
+// This function now directly calls the API route for completing a Twilio room.
 export async function completeTwilioRoom(roomName: string): Promise<{ success: boolean; error?: string }> {
-  await new Promise(resolve => setTimeout(resolve, 500));
-  console.log(`Simulating completion of Twilio room: ${roomName}`);
-  // In a real app, this would call Twilio's REST API: client.video.rooms(roomName).update({ status: 'completed' })
-  return { success: true };
+  try {
+    // Assuming your Next.js app is running on the same domain or you have a full URL
+    // For server components/actions, you might need the full URL if calling from server-side outside of a request context.
+    // However, this action is likely called from client components, so relative path should be fine.
+    const response = await fetch(`/api/twilio/room/complete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ roomName }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error(`Failed to complete Twilio room ${roomName}: ${response.status} - ${errorData.error || 'Unknown error'}`);
+      return { success: false, error: errorData.error || `Failed to complete room: ${response.statusText}` };
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      console.log(`Successfully completed Twilio room: ${roomName}`);
+      return { success: true };
+    } else {
+      console.error(`API reported failure to complete Twilio room ${roomName}: ${result.message || result.error}`);
+      return { success: false, error: result.message || result.error || "API call to complete room was not successful." };
+    }
+  } catch (error: any) {
+    console.error(`Error completing Twilio room ${roomName} via API call:`, error);
+    return { success: false, error: `Exception when trying to complete room: ${error.message}` };
+  }
 }

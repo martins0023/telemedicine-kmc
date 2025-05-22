@@ -10,7 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { VerifyEmailSchema, type VerifyEmailFormData, EnterNameSchema, type EnterNameFormData } from "@/lib/schemas";
-import { verifyClientEmail, updateClientName, generateTwilioToken, completeTwilioRoom, getConsultationDetails } from "@/actions/consultationActions";
+import { verifyClientEmail, updateClientName, completeTwilioRoom, getConsultationDetails } from "@/actions/consultationActions";
 import type { Consultation } from "@/types";
 import { AlertCircle, CheckCircle, Clock, Loader2, LogIn, UserPlus, Video as VideoIcon, AlertTriangle, BadgePercent, UserCircle2 } from "lucide-react";
 import { ExtensionModal } from "./ExtensionModal";
@@ -69,7 +69,7 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
              toast({ title: "Session Ended", description: "The consultation time is over." });
            });
         }
-        setStage("ENDED"); // This will unmount VideoComponentPlaceholder, triggering its cleanup
+        setStage("ENDED"); 
         setTimeLeft("");
       } else if (now < startDateTime) {
         setSessionStatusMessage(`Consultation starts in ${formatDistanceToNowStrict(startDateTime)}.`);
@@ -82,7 +82,7 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [startDateTime, endDateTime, stage, roomName, toast]); // Added toast to deps
+  }, [startDateTime, endDateTime, stage, roomName, toast]);
 
 
   async function handleEmailSubmit(data: VerifyEmailFormData) {
@@ -124,21 +124,39 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
       return;
     }
     setIsLoading(true);
-    // Use clientName as identity. Ensure it's URL-safe or handle encoding if necessary, though Twilio usually handles it.
-    const tokenResult = await generateTwilioToken(clientName, roomName); 
-    if (tokenResult.success && tokenResult.token) {
-      setTwilioToken(tokenResult.token);
-      setStage("IN_CALL");
-      toast({ title: "Joining Call...", icon: <VideoIcon className="h-5 w-5 text-primary" /> });
-    } else {
-      toast({ title: "❌ Failed to Join", description: tokenResult.error || "Could not get access token.", variant: "destructive" });
+    try {
+      const response = await fetch('/api/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identity: clientName, roomName }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to fetch token: ${response.statusText}`);
+      }
+
+      const tokenResult = await response.json();
+
+      if (tokenResult.token) {
+        setTwilioToken(tokenResult.token);
+        setStage("IN_CALL");
+        toast({ title: "Joining Call...", icon: <VideoIcon className="h-5 w-5 text-primary" /> });
+      } else {
+        toast({ title: "❌ Failed to Join", description: "Could not get access token from server.", variant: "destructive" });
+      }
+    } catch (error: any) {
+      console.error("Error fetching Twilio token:", error);
+      toast({ title: "❌ Failed to Join", description: error.message || "An error occurred while trying to join the call.", variant: "destructive" });
     }
     setIsLoading(false);
   }
 
   const handleLeaveCallFromVideoComponent = useCallback(() => {
-    setStage("LOBBY"); // Transition back to lobby
-    setTwilioToken(null); // Clear token
+    setStage("LOBBY"); 
+    setTwilioToken(null); 
     toast({title: "Call Ended", description: "You have left the consultation."});
   }, [toast]);
 
@@ -166,7 +184,7 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
   }, [stage]);
 
   return (
-    <div className="w-full max-w-md md:max-w-2xl lg:max-w-4xl"> {/* Adjusted max width for video call */}
+    <div className="w-full max-w-md md:max-w-2xl lg:max-w-4xl">
       <Card className="shadow-xl">
         <CardHeader className="text-center">
           <div className="mx-auto bg-primary/10 text-primary rounded-full p-3 w-fit mb-4">
@@ -242,19 +260,17 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
 
           {stage === "IN_CALL" && twilioToken && clientName && (
             <div>
-              {/* The VideoComponentPlaceholder now handles the actual video call */}
               <VideoComponentPlaceholder 
                 roomName={roomName} 
                 token={twilioToken} 
                 identity={clientName} 
-                isHost={false} // Assuming client is not host, adjust if logic allows host to join this way
+                isHost={false} 
                 onLeaveCall={handleLeaveCallFromVideoComponent}
               />
               <div className="mt-4 flex flex-col sm:flex-row gap-2">
                 <Button variant="outline" className="w-full sm:w-auto flex-1" onClick={() => setShowExtensionModal(true)}>
                   <BadgePercent className="mr-2 h-4 w-4" /> Buy More Minutes
                 </Button>
-                 {/* Leave call is now handled by VideoComponentPlaceholder's internal button */}
               </div>
             </div>
           )}
