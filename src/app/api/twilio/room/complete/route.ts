@@ -1,6 +1,6 @@
+
 import { NextResponse } from 'next/server';
-// In a real app, you'd use the twilio package:
-// import Twilio from 'twilio';
+import Twilio from 'twilio';
 
 export async function POST(request: Request) {
   try {
@@ -10,36 +10,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing roomName' }, { status: 400 });
     }
 
-    // const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-    // const twilioApiKeySid = process.env.TWILIO_API_KEY_SID; // Or AuthToken for direct API calls
-    // const twilioApiKeySecret = process.env.TWILIO_API_KEY_SECRET; // Or AuthToken
+    const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioApiKeySid = process.env.TWILIO_API_KEY_SID; // For client initialization, an API Key SID/Secret is good practice
+    const twilioApiKeySecret = process.env.TWILIO_API_KEY_SECRET; // Or use Account SID and Auth Token
 
-    // if (!twilioAccountSid || !twilioApiKeySid || !twilioApiKeySecret) {
-    //   return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 });
-    // }
+    if (!twilioAccountSid || !twilioApiKeySid || !twilioApiKeySecret) {
+      console.error('Twilio credentials not configured in .env.local for room completion.');
+      return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 });
+    }
 
-    // const client = Twilio(twilioApiKeySid, twilioApiKeySecret, { accountSid: twilioAccountSid });
+    // If using API Key SID/Secret for the client:
+    const client = Twilio(twilioApiKeySid, twilioApiKeySecret, { accountSid: twilioAccountSid });
+    // If using Account SID and Auth Token (less common for this specific SDK use, but possible):
+    // const authToken = process.env.TWILIO_AUTH_TOKEN; // ensure this is set if using
+    // const client = Twilio(twilioAccountSid, authToken);
 
-    // try {
-    //   const room = await client.video.rooms(roomName).update({ status: 'completed' });
-    //   console.log(`Room ${room.sid} completed successfully.`);
-    //   return NextResponse.json({ success: true, message: `Room ${roomName} completed.` });
-    // } catch (twilioError: any) {
-    //   // If room already completed or not found, Twilio might throw an error. Handle appropriately.
-    //   if (twilioError.status === 404) {
-    //     return NextResponse.json({ success: true, message: `Room ${roomName} not found or already completed.` });
-    //   }
-    //   console.error(`Failed to complete Twilio room ${roomName}:`, twilioError);
-    //   return NextResponse.json({ error: `Failed to complete room: ${twilioError.message}` }, { status: 500 });
-    // }
-    
-    console.log(`Simulating completion of Twilio room: ${roomName}`);
-    // Add actual Twilio API call here in a real app.
 
-    return NextResponse.json({ success: true, message: `Room ${roomName} marked as completed (simulation).` });
+    try {
+      // Check if room exists and is in-progress before trying to complete
+      const roomInstance = await client.video.v1.rooms(roomName).fetch();
+      if (roomInstance.status !== 'completed') {
+        const room = await client.video.v1.rooms(roomName).update({ status: 'completed' });
+        console.log(`Room ${room.sid} completed successfully.`);
+        return NextResponse.json({ success: true, message: `Room ${roomName} completed.` });
+      } else {
+        console.log(`Room ${roomName} was already completed.`);
+        return NextResponse.json({ success: true, message: `Room ${roomName} already completed.` });
+      }
+    } catch (twilioError: any) {
+      // If room not found, Twilio throws a 404. Consider this as "already completed or never existed".
+      if (twilioError.status === 404) {
+        console.warn(`Room ${roomName} not found. Assuming completed or never existed.`);
+        return NextResponse.json({ success: true, message: `Room ${roomName} not found or already completed.` });
+      }
+      console.error(`Failed to complete Twilio room ${roomName}:`, twilioError);
+      return NextResponse.json({ error: `Failed to complete room: ${twilioError.message}` }, { status: 500 });
+    }
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in complete room API:", error);
-    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
+    return NextResponse.json({ error: `Failed to process request: ${error.message}` }, { status: 500 });
   }
 }

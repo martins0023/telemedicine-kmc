@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { VerifyEmailSchema, type VerifyEmailFormData, EnterNameSchema, type EnterNameFormData } from "@/lib/schemas";
-import { verifyClientEmail, updateClientName, generateTwilioToken, completeTwilioRoom, extendConsultationTime, getConsultationDetails } from "@/actions/consultationActions";
+import { verifyClientEmail, updateClientName, generateTwilioToken, completeTwilioRoom, getConsultationDetails } from "@/actions/consultationActions";
 import type { Consultation } from "@/types";
 import { AlertCircle, CheckCircle, Clock, Loader2, LogIn, UserPlus, Video as VideoIcon, AlertTriangle, BadgePercent, UserCircle2 } from "lucide-react";
 import { ExtensionModal } from "./ExtensionModal";
@@ -64,28 +65,24 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
         setSessionStatusMessage("This consultation has ended.");
         setCanJoin(false);
         if (stage === "IN_CALL") {
-          // Programmatically end Twilio room if client is host or via specific logic
            completeTwilioRoom(roomName).then(() => {
              toast({ title: "Session Ended", description: "The consultation time is over." });
            });
         }
-        setStage("ENDED");
+        setStage("ENDED"); // This will unmount VideoComponentPlaceholder, triggering its cleanup
         setTimeLeft("");
       } else if (now < startDateTime) {
         setSessionStatusMessage(`Consultation starts in ${formatDistanceToNowStrict(startDateTime)}.`);
         setTimeLeft(formatDistanceToNowStrict(startDateTime, { unit: 'second' }));
         setCanJoin(false);
-      } else { // Between start and end time
+      } else { 
         setSessionStatusMessage(`Consultation ends in ${formatDistanceToNowStrict(endDateTime)}.`);
         setTimeLeft(formatDistanceToNowStrict(endDateTime, { unit: 'second' }));
         setCanJoin(true);
-        if (stage === "LOBBY" && !sessionStatusMessage.startsWith("Consultation ends in")) {
-            // Automatically transition from countdown to joinable if in lobby
-        }
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [startDateTime, endDateTime, stage, roomName, sessionStatusMessage]);
+  }, [startDateTime, endDateTime, stage, roomName, toast]); // Added toast to deps
 
 
   async function handleEmailSubmit(data: VerifyEmailFormData) {
@@ -127,7 +124,8 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
       return;
     }
     setIsLoading(true);
-    const tokenResult = await generateTwilioToken(clientName, roomName); // Identity could be email or name
+    // Use clientName as identity. Ensure it's URL-safe or handle encoding if necessary, though Twilio usually handles it.
+    const tokenResult = await generateTwilioToken(clientName, roomName); 
     if (tokenResult.success && tokenResult.token) {
       setTwilioToken(tokenResult.token);
       setStage("IN_CALL");
@@ -138,12 +136,17 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
     setIsLoading(false);
   }
 
+  const handleLeaveCallFromVideoComponent = useCallback(() => {
+    setStage("LOBBY"); // Transition back to lobby
+    setTwilioToken(null); // Clear token
+    toast({title: "Call Ended", description: "You have left the consultation."});
+  }, [toast]);
+
   const handleExtendSuccess = async (newEndTime: string) => {
     toast({
       title: "✅ Consultation Extended!",
       description: `New end time: ${newEndTime}.`,
     });
-    // Refetch or update consultation details
     const updatedDetails = await getConsultationDetails(roomName);
     if (updatedDetails) {
       setConsultationDetails(updatedDetails);
@@ -163,7 +166,7 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
   }, [stage]);
 
   return (
-    <div className="w-full max-w-md">
+    <div className="w-full max-w-md md:max-w-2xl lg:max-w-4xl"> {/* Adjusted max width for video call */}
       <Card className="shadow-xl">
         <CardHeader className="text-center">
           <div className="mx-auto bg-primary/10 text-primary rounded-full p-3 w-fit mb-4">
@@ -223,12 +226,13 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
           {stage === "LOBBY" && (
             <div className="text-center space-y-4">
               <p className="text-lg font-semibold">Welcome, {clientName}!</p>
-              <div className="p-4 border rounded-md bg-accent/50">
-                <p className="text-sm text-accent-foreground/80">{sessionStatusMessage}</p>
+              <div className="p-4 border rounded-md bg-background shadow">
+                <p className="text-sm text-muted-foreground">{sessionStatusMessage}</p>
                 {timeLeft && !sessionStatusMessage.startsWith("Consultation ends in") && <p className="text-2xl font-bold text-primary">{timeLeft}</p>}
+                 {timeLeft && sessionStatusMessage.startsWith("Consultation ends in") && <p className="text-xl font-semibold text-primary">Time remaining: {timeLeft}</p>}
               </div>
               <Button onClick={handleJoinCall} className="w-full" disabled={!canJoin || isLoading}>
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Join Consultation"}
+                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <><VideoIcon className="mr-2 h-5 w-5" />Join Consultation</>}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => setShowExtensionModal(true)} disabled={!canJoin}>
                 <BadgePercent className="mr-2 h-4 w-4" /> Extend Slot / Buy More Time
@@ -238,14 +242,20 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
 
           {stage === "IN_CALL" && twilioToken && clientName && (
             <div>
-              <p className="text-center text-green-600 font-semibold mb-2">Connected to consultation!</p>
-              <VideoComponentPlaceholder roomName={roomName} token={twilioToken} identity={clientName} isHost={false} />
-              <Button variant="outline" className="w-full mt-4" onClick={() => setShowExtensionModal(true)}>
-                 <BadgePercent className="mr-2 h-4 w-4" /> Buy More Minutes
-              </Button>
-               <Button variant="destructive" className="w-full mt-2" onClick={() => setStage("LOBBY") /* Simulate leaving */}>
-                Leave Call
-              </Button>
+              {/* The VideoComponentPlaceholder now handles the actual video call */}
+              <VideoComponentPlaceholder 
+                roomName={roomName} 
+                token={twilioToken} 
+                identity={clientName} 
+                isHost={false} // Assuming client is not host, adjust if logic allows host to join this way
+                onLeaveCall={handleLeaveCallFromVideoComponent}
+              />
+              <div className="mt-4 flex flex-col sm:flex-row gap-2">
+                <Button variant="outline" className="w-full sm:w-auto flex-1" onClick={() => setShowExtensionModal(true)}>
+                  <BadgePercent className="mr-2 h-4 w-4" /> Buy More Minutes
+                </Button>
+                 {/* Leave call is now handled by VideoComponentPlaceholder's internal button */}
+              </div>
             </div>
           )}
           
@@ -257,8 +267,8 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
           )}
 
         </CardContent>
-        <CardFooter className="text-xs text-muted-foreground text-center block">
-          Scheduled for: {new Date(date + ' ' + startTime).toLocaleString()} - {new Date(date + ' ' + endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+        <CardFooter className="text-xs text-muted-foreground text-center block pt-4">
+          Scheduled: {new Date(date + ' ' + startTime).toLocaleString()} - {new Date(date + ' ' + endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
         </CardFooter>
       </Card>
 
