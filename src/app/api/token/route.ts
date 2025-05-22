@@ -18,7 +18,11 @@ export async function POST(request: Request) {
     const twilioApiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
     if (!twilioAccountSid || !twilioApiKeySid || !twilioApiKeySecret) {
-      console.error('Twilio credentials not configured in .env.local');
+      console.error('Twilio credentials check:');
+      console.error(` - TWILIO_ACCOUNT_SID: ${twilioAccountSid ? 'Loaded' : 'MISSING'}`);
+      console.error(` - TWILIO_API_KEY_SID: ${twilioApiKeySid ? 'Loaded' : 'MISSING'}`);
+      console.error(` - TWILIO_API_KEY_SECRET: ${twilioApiKeySecret ? 'Loaded' : 'MISSING (should be loaded)'}`);
+      console.error('Please ensure all Twilio credentials are correctly set in .env.local and the server has been restarted.');
       return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 });
     }
 

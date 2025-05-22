@@ -11,23 +11,21 @@ export async function POST(request: Request) {
     }
 
     const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioApiKeySid = process.env.TWILIO_API_KEY_SID; // For client initialization, an API Key SID/Secret is good practice
-    const twilioApiKeySecret = process.env.TWILIO_API_KEY_SECRET; // Or use Account SID and Auth Token
+    const twilioApiKeySid = process.env.TWILIO_API_KEY_SID; 
+    const twilioApiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
     if (!twilioAccountSid || !twilioApiKeySid || !twilioApiKeySecret) {
-      console.error('Twilio credentials not configured in .env.local for room completion.');
+      console.error('Twilio credentials check for room completion:');
+      console.error(` - TWILIO_ACCOUNT_SID: ${twilioAccountSid ? 'Loaded' : 'MISSING'}`);
+      console.error(` - TWILIO_API_KEY_SID: ${twilioApiKeySid ? 'Loaded' : 'MISSING'}`);
+      console.error(` - TWILIO_API_KEY_SECRET: ${twilioApiKeySecret ? 'Loaded' : 'MISSING (should be loaded)'}`);
+      console.error('Please ensure all Twilio credentials are correctly set in .env.local for room completion and the server has been restarted.');
       return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 });
     }
 
-    // If using API Key SID/Secret for the client:
     const client = Twilio(twilioApiKeySid, twilioApiKeySecret, { accountSid: twilioAccountSid });
-    // If using Account SID and Auth Token (less common for this specific SDK use, but possible):
-    // const authToken = process.env.TWILIO_AUTH_TOKEN; // ensure this is set if using
-    // const client = Twilio(twilioAccountSid, authToken);
-
 
     try {
-      // Check if room exists and is in-progress before trying to complete
       const roomInstance = await client.video.v1.rooms(roomName).fetch();
       if (roomInstance.status !== 'completed') {
         const room = await client.video.v1.rooms(roomName).update({ status: 'completed' });
@@ -38,7 +36,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, message: `Room ${roomName} already completed.` });
       }
     } catch (twilioError: any) {
-      // If room not found, Twilio throws a 404. Consider this as "already completed or never existed".
       if (twilioError.status === 404) {
         console.warn(`Room ${roomName} not found. Assuming completed or never existed.`);
         return NextResponse.json({ success: true, message: `Room ${roomName} not found or already completed.` });
