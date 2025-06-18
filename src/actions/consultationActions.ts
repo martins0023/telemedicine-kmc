@@ -3,7 +3,7 @@
 
 import type { ScheduleConsultationFormData } from '@/lib/schemas';
 import type { Consultation } from '@/types';
-import { format, parseISO } from 'date-fns';
+// import { format, parseISO } from 'date-fns'; // format not used directly here anymore, parseISO not needed server-side for this action
 import { connectToDatabase } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
@@ -21,21 +21,19 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
       return { success: false, error: "Room name already exists. Please choose a unique name." };
     }
 
-    // Combine date and time parts from form data (which are in host's local timezone)
-    // and create Date objects representing these local times, then convert to UTC for storage.
-    const year = data.date.getFullYear();
-    const month = data.date.getMonth(); // 0-11
-    const day = data.date.getDate();
-
     const [startHour, startMinute] = data.startTime.split(':').map(Number);
     const [endHour, endMinute] = data.endTime.split(':').map(Number);
 
-    // Create Date objects in UTC using Date.UTC()
-    // Date.UTC returns a timestamp, new Date() converts it to a Date object
-    const startDateTimeUTC = new Date(Date.UTC(year, month, day, startHour, startMinute));
-    const endDateTimeUTC = new Date(Date.UTC(year, month, day, endHour, endMinute));
+    // Create a new Date object from data.date (which is host's local midnight for the selected day)
+    // Then set the time components also in the host's local timezone.
+    const localStartDate = new Date(data.date);
+    localStartDate.setHours(startHour, startMinute, 0, 0);
 
-    if (endDateTimeUTC <= startDateTimeUTC) {
+    const localEndDate = new Date(data.date); // Use the same date part from data.date
+    localEndDate.setHours(endHour, endMinute, 0, 0);
+
+    // Validate that end time is after start time based on these local Date objects
+    if (localEndDate.getTime() <= localStartDate.getTime()) {
         return { success: false, error: "End time must be after start time." };
     }
 
@@ -43,10 +41,12 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
       hostName: data.hostName,
       roomName: data.roomName,
       normalizedRoomName: normalizedRoomName,
-      startDateTimeUTC: startDateTimeUTC, // Store as BSON Date (UTC)
-      endDateTimeUTC: endDateTimeUTC,     // Store as BSON Date (UTC)
+      // These localStartDate/EndDate are JS Date objects representing the host's local time.
+      // MongoDB will store them as BSON Dates (UTC timestamps).
+      startDateTimeUTC: localStartDate,
+      endDateTimeUTC: localEndDate,
       clients: data.clientEmails.split(',').map(email => ({ email: email.trim().toLowerCase() })),
-      createdAt: new Date(), // Store as BSON Date (UTC)
+      createdAt: new Date(), // Current time, stored as BSON Date (UTC)
     };
 
     const result = await ConsultationsCollection.insertOne(newConsultationDbData);
@@ -55,12 +55,14 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
         return { success: false, error: "Failed to schedule consultation in database." };
     }
 
+    // For the client, convert the BSON Dates (which become JS Dates when retrieved) to ISO strings.
+    // The JS Dates from newConsultationDbData.startDateTimeUTC/endDateTimeUTC are already correct instants.
     const createdConsultationForClient: Consultation = {
         hostName: newConsultationDbData.hostName,
         roomName: newConsultationDbData.roomName,
         normalizedRoomName: newConsultationDbData.normalizedRoomName,
-        startDateTimeUTC: newConsultationDbData.startDateTimeUTC.toISOString(), // Convert to ISO string
-        endDateTimeUTC: newConsultationDbData.endDateTimeUTC.toISOString(),     // Convert to ISO string
+        startDateTimeUTC: newConsultationDbData.startDateTimeUTC.toISOString(),
+        endDateTimeUTC: newConsultationDbData.endDateTimeUTC.toISOString(),
         clients: newConsultationDbData.clients,
         createdAt: newConsultationDbData.createdAt.toISOString(), 
         id: result.insertedId.toHexString(), 
@@ -85,13 +87,15 @@ export async function getConsultationDetails(roomName: string): Promise<Consulta
       return null;
     }
 
+    // consultationDoc contains BSON Dates which are automatically converted to JS Date objects
+    // These JS Date objects correctly represent the UTC instant.
     const consultationForClient: Consultation = {
         hostName: consultationDoc.hostName,
         roomName: consultationDoc.roomName,
         normalizedRoomName: consultationDoc.normalizedRoomName,
         startDateTimeUTC: (consultationDoc.startDateTimeUTC as Date).toISOString(),
         endDateTimeUTC: (consultationDoc.endDateTimeUTC as Date).toISOString(),
-        clients: consultationDoc.clients.map(c => ({ email: c.email, name: c.name })), 
+        clients: consultationDoc.clients.map(c => ({ email: c.email.toLowerCase(), name: c.name })), 
         id: (consultationDoc._id as ObjectId).toHexString(), 
         createdAt: (consultationDoc.createdAt as Date).toISOString(), 
     };
@@ -157,14 +161,14 @@ export async function extendConsultationTime(roomName: string, minutes: number):
       return { success: false, error: "Consultation not found." };
     }
     
-    // consultation.endDateTimeUTC is already a BSON Date from DB, which becomes a JS Date object
+    // consultation.endDateTimeUTC is retrieved as a JS Date object (UTC) from MongoDB
     const currentEndDateTimeUTC = consultation.endDateTimeUTC as Date;
     
     const newEndDateTimeUTC = new Date(currentEndDateTimeUTC.getTime() + minutes * 60000);
 
     const result = await ConsultationsCollection.updateOne(
       { _id: consultation._id as ObjectId }, 
-      { $set: { endDateTimeUTC: newEndDateTimeUTC } } // Store as BSON Date
+      { $set: { endDateTimeUTC: newEndDateTimeUTC } } // Store as BSON Date (UTC)
     );
 
     if (result.modifiedCount === 0) {
@@ -181,7 +185,11 @@ export async function extendConsultationTime(roomName: string, minutes: number):
 export async function completeTwilioRoom(roomName: string): Promise<{ success: boolean; error?: string }> {
   const normalizedRoomNameToComplete = normalizeRoomName(roomName);
   try {
-    const response = await fetch(`/api/twilio/room/complete`, {
+    // Ensure fetch is using an absolute URL if this runs server-side and calls itself,
+    // or better, call the Twilio SDK directly if applicable.
+    // For now, assuming this API is called from client or a well-defined server context.
+    const domain = process.env.NEXT_PUBLIC_DOMAIN_URL || ''; // Set this in .env if needed
+    const response = await fetch(`${domain}/api/twilio/room/complete`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
