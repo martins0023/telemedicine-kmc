@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -8,13 +9,15 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { extendConsultationTime } from "@/actions/consultationActions";
 import { Loader2, CreditCard } from "lucide-react";
+import { parseISO } from "date-fns";
 
 type ExtensionModalProps = {
   isOpen: boolean;
   onClose: () => void;
   roomName: string;
-  currentEndTime: string;
-  onExtensionSuccess: (newEndTime: string) => void;
+  currentEndTime: string; // This is for display (local time string)
+  currentEndTimeUTC: string; // This is the UTC ISO string for logic
+  onExtensionSuccess: (newEndTimeISO: string) => void;
 };
 
 const extensionOptions = [
@@ -23,7 +26,7 @@ const extensionOptions = [
   { minutes: 60, price: 15.00, label: "60 minutes - $15.00" },
 ];
 
-export function ExtensionModal({ isOpen, onClose, roomName, currentEndTime, onExtensionSuccess }: ExtensionModalProps) {
+export function ExtensionModal({ isOpen, onClose, roomName, currentEndTime, currentEndTimeUTC, onExtensionSuccess }: ExtensionModalProps) {
   const [selectedMinutes, setSelectedMinutes] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
@@ -35,16 +38,15 @@ export function ExtensionModal({ isOpen, onClose, roomName, currentEndTime, onEx
     }
     setIsLoading(true);
 
-    // Simulate Paystack integration
-    // In a real app, you'd initialize Paystack checkout here
     toast({ title: "Processing Payment...", description: "Redirecting to payment gateway (simulation)." });
-    await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate payment processing
+    await new Promise(resolve => setTimeout(resolve, 2000)); 
 
-    // Simulate successful payment webhook callback
-    const paymentReference = `mock_paystack_ref_${Date.now()}`;
+    // The extendConsultationTime action now works with UTC internally
+    // and expects the roomName and the number of minutes to extend.
+    // It will fetch the current UTC end time from the database.
     const result = await extendConsultationTime(roomName, selectedMinutes);
 
-    if (result.success && result.newEndTime) {
+    if (result.success && result.newEndTime) { // newEndTime is an ISO string
       onExtensionSuccess(result.newEndTime);
     } else {
       toast({ title: "❌ Extension Failed", description: result.error || "Could not extend time.", variant: "destructive" });

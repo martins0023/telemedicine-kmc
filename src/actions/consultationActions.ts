@@ -7,7 +7,6 @@ import { format, parseISO } from 'date-fns';
 import { connectToDatabase } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 
-// Helper to normalize room names to lowercase for consistent storage and querying
 const normalizeRoomName = (name: string): string => {
   return name.toLowerCase().trim();
 };
@@ -17,22 +16,37 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
     const { ConsultationsCollection } = await connectToDatabase();
     const normalizedRoomName = normalizeRoomName(data.roomName);
 
-    // Check using the MongoDB collection type which expects _id and Date for createdAt
     const existingConsultationDoc = await ConsultationsCollection.findOne({ normalizedRoomName });
     if (existingConsultationDoc) {
       return { success: false, error: "Room name already exists. Please choose a unique name." };
     }
 
-    // Data to be inserted into MongoDB
+    // Combine date and time parts from form data (which are in host's local timezone)
+    // and create Date objects representing these local times, then convert to UTC for storage.
+    const year = data.date.getFullYear();
+    const month = data.date.getMonth(); // 0-11
+    const day = data.date.getDate();
+
+    const [startHour, startMinute] = data.startTime.split(':').map(Number);
+    const [endHour, endMinute] = data.endTime.split(':').map(Number);
+
+    // Create Date objects in UTC using Date.UTC()
+    // Date.UTC returns a timestamp, new Date() converts it to a Date object
+    const startDateTimeUTC = new Date(Date.UTC(year, month, day, startHour, startMinute));
+    const endDateTimeUTC = new Date(Date.UTC(year, month, day, endHour, endMinute));
+
+    if (endDateTimeUTC <= startDateTimeUTC) {
+        return { success: false, error: "End time must be after start time." };
+    }
+
     const newConsultationDbData = {
       hostName: data.hostName,
       roomName: data.roomName,
       normalizedRoomName: normalizedRoomName,
-      date: format(data.date, 'yyyy-MM-dd'),
-      startTime: data.startTime,
-      endTime: data.endTime,
+      startDateTimeUTC: startDateTimeUTC, // Store as BSON Date (UTC)
+      endDateTimeUTC: endDateTimeUTC,     // Store as BSON Date (UTC)
       clients: data.clientEmails.split(',').map(email => ({ email: email.trim().toLowerCase() })),
-      createdAt: new Date(), // Store as Date object in MongoDB
+      createdAt: new Date(), // Store as BSON Date (UTC)
     };
 
     const result = await ConsultationsCollection.insertOne(newConsultationDbData);
@@ -41,17 +55,15 @@ export async function scheduleConsultation(data: ScheduleConsultationFormData) {
         return { success: false, error: "Failed to schedule consultation in database." };
     }
 
-    // Data to be returned to the client (must be serializable)
     const createdConsultationForClient: Consultation = {
         hostName: newConsultationDbData.hostName,
         roomName: newConsultationDbData.roomName,
         normalizedRoomName: newConsultationDbData.normalizedRoomName,
-        date: newConsultationDbData.date,
-        startTime: newConsultationDbData.startTime,
-        endTime: newConsultationDbData.endTime,
+        startDateTimeUTC: newConsultationDbData.startDateTimeUTC.toISOString(), // Convert to ISO string
+        endDateTimeUTC: newConsultationDbData.endDateTimeUTC.toISOString(),     // Convert to ISO string
         clients: newConsultationDbData.clients,
-        createdAt: newConsultationDbData.createdAt.toISOString(), // Convert Date to string
-        id: result.insertedId.toHexString(), // Convert ObjectId to string
+        createdAt: newConsultationDbData.createdAt.toISOString(), 
+        id: result.insertedId.toHexString(), 
     };
 
     const joinLink = `/consult/${normalizedRoomName}`;
@@ -68,24 +80,20 @@ export async function getConsultationDetails(roomName: string): Promise<Consulta
     const { ConsultationsCollection } = await connectToDatabase();
     const normalizedSearchRoomName = normalizeRoomName(roomName);
     
-    // consultationDoc is the raw document from MongoDB
     const consultationDoc = await ConsultationsCollection.findOne({ normalizedRoomName: normalizedSearchRoomName });
     if (!consultationDoc) {
       return null;
     }
 
-    // Transform to the client-safe Consultation type
     const consultationForClient: Consultation = {
         hostName: consultationDoc.hostName,
         roomName: consultationDoc.roomName,
         normalizedRoomName: consultationDoc.normalizedRoomName,
-        // Ensure date is string formatted if it's a Date object from DB (though it should be string based on insertion)
-        date: typeof consultationDoc.date === 'string' ? consultationDoc.date : format(consultationDoc.date as Date, 'yyyy-MM-dd'),
-        startTime: consultationDoc.startTime,
-        endTime: consultationDoc.endTime,
+        startDateTimeUTC: (consultationDoc.startDateTimeUTC as Date).toISOString(),
+        endDateTimeUTC: (consultationDoc.endDateTimeUTC as Date).toISOString(),
         clients: consultationDoc.clients.map(c => ({ email: c.email, name: c.name })), 
-        id: consultationDoc._id.toHexString(), // Convert ObjectId to string id
-        createdAt: consultationDoc.createdAt.toISOString(), // Convert Date to ISO string
+        id: (consultationDoc._id as ObjectId).toHexString(), 
+        createdAt: (consultationDoc.createdAt as Date).toISOString(), 
     };
     return consultationForClient;
   } catch (error) {
@@ -132,7 +140,6 @@ export async function updateClientName(roomName: string, email: string, name: st
     if (result.matchedCount === 0) {
       return { success: false, error: "Consultation or client not found." };
     }
-    // No need to check modifiedCount specifically, if matched and no error, it's okay.
     return { success: true };
   } catch (error) {
     console.error("Error in updateClientName:", error);
@@ -150,23 +157,21 @@ export async function extendConsultationTime(roomName: string, minutes: number):
       return { success: false, error: "Consultation not found." };
     }
     
-    // consultation.date is already a string 'yyyy-MM-dd'
-    // consultation.endTime is 'HH:mm'
-    const currentEndDateTime = parseISO(`${consultation.date}T${consultation.endTime}:00`);
+    // consultation.endDateTimeUTC is already a BSON Date from DB, which becomes a JS Date object
+    const currentEndDateTimeUTC = consultation.endDateTimeUTC as Date;
     
-    const newEndDateTime = new Date(currentEndDateTime.getTime() + minutes * 60000);
-    const newEndTimeStr = format(newEndDateTime, 'HH:mm');
+    const newEndDateTimeUTC = new Date(currentEndDateTimeUTC.getTime() + minutes * 60000);
 
     const result = await ConsultationsCollection.updateOne(
-      { _id: consultation._id }, // Use _id for update operations
-      { $set: { endTime: newEndTimeStr } }
+      { _id: consultation._id as ObjectId }, 
+      { $set: { endDateTimeUTC: newEndDateTimeUTC } } // Store as BSON Date
     );
 
     if (result.modifiedCount === 0) {
       return { success: false, error: "Failed to update consultation end time." };
     }
     
-    return { success: true, newEndTime: newEndTimeStr };
+    return { success: true, newEndTime: newEndDateTimeUTC.toISOString() }; // Return ISO string
   } catch (error) {
     console.error("Error in extendConsultationTime:", error);
     return { success: false, error: "An internal server error occurred." };
@@ -176,13 +181,6 @@ export async function extendConsultationTime(roomName: string, minutes: number):
 export async function completeTwilioRoom(roomName: string): Promise<{ success: boolean; error?: string }> {
   const normalizedRoomNameToComplete = normalizeRoomName(roomName);
   try {
-    // Potentially update consultation status in MongoDB here
-    // const { ConsultationsCollection } = await connectToDatabase();
-    // await ConsultationsCollection.updateOne(
-    //   { normalizedRoomName: normalizedRoomNameToComplete },
-    //   { $set: { status: "completed" } } 
-    // );
-
     const response = await fetch(`/api/twilio/room/complete`, {
       method: 'POST',
       headers: {

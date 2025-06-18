@@ -34,7 +34,8 @@ export function ScheduleForm() {
   async function onSubmit(data: ScheduleConsultationFormData) {
     setIsLoading(true);
     try {
-      const result = await scheduleConsultation(data);
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const result = await scheduleConsultation({ ...data, timezone });
       if (result.success && result.joinLink) {
         navigator.clipboard.writeText(`${window.location.origin}${result.joinLink}`)
           .then(() => {

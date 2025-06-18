@@ -1,3 +1,4 @@
+
 import { z } from 'zod';
 
 export const ScheduleConsultationSchema = z.object({
@@ -11,14 +12,13 @@ export const ScheduleConsultationSchema = z.object({
       message: "Please provide a comma-separated list of valid email addresses."
     }),
 }).refine(data => {
-  // Basic time validation: end time should be after start time
-  // This doesn't account for date changes, assuming same day consultation for simplicity here
+  // This validation happens with local time inputs before conversion to UTC
   const [startH, startM] = data.startTime.split(':').map(Number);
   const [endH, endM] = data.endTime.split(':').map(Number);
   return endH > startH || (endH === startH && endM > startM);
 }, {
-  message: "End time must be after start time.",
-  path: ["endTime"],
+  message: "End time must be after start time on the same day.",
+  path: ["endTime"], // Apply error to endTime field
 });
 
 export type ScheduleConsultationFormData = z.infer<typeof ScheduleConsultationSchema>;

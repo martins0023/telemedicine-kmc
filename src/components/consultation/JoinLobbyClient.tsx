@@ -15,7 +15,7 @@ import type { Consultation } from "@/types";
 import { AlertCircle, CheckCircle, Clock, Loader2, LogIn, UserPlus, Video as VideoIcon, AlertTriangle, BadgePercent, UserCircle2 } from "lucide-react";
 import { ExtensionModal } from "./ExtensionModal";
 import { VideoComponentPlaceholder } from "./VideoComponentPlaceholder"; 
-import { differenceInSeconds, formatDistanceToNowStrict, parse } from "date-fns";
+import { differenceInSeconds, formatDistanceToNowStrict, parseISO } from "date-fns";
 
 type JoinLobbyClientProps = {
   roomName: string;
@@ -48,19 +48,22 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
     defaultValues: { name: "" },
   });
 
-  const { hostName, date, startTime, endTime } = consultationDetails;
+  const { hostName, startDateTimeUTC, endDateTimeUTC } = consultationDetails;
 
-  const startDateTime = useMemo(() => parse(`${date} ${startTime}`, 'yyyy-MM-dd HH:mm', new Date()), [date, startTime]);
-  const endDateTime = useMemo(() => parse(`${date} ${endTime}`, 'yyyy-MM-dd HH:mm', new Date()), [date, endTime]);
+  // Parse ISO UTC strings into Date objects. These Date objects will represent the correct point in time.
+  const startDateTime = useMemo(() => parseISO(startDateTimeUTC), [startDateTimeUTC]);
+  const endDateTime = useMemo(() => parseISO(endDateTimeUTC), [endDateTimeUTC]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const now = new Date();
+      const now = new Date(); // User's current local time
+
       if (stage === "ENDED") {
         clearInterval(interval);
         return;
       }
-
+      
+      // All comparisons are now against universal UTC Date objects
       if (now > endDateTime) {
         setSessionStatusMessage("This consultation has ended.");
         setCanJoin(false);
@@ -160,11 +163,13 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
     toast({title: "Call Ended", description: "You have left the consultation."});
   }, [toast]);
 
-  const handleExtendSuccess = async (newEndTime: string) => {
+  const handleExtendSuccess = async (newEndTimeISO: string) => {
+    const newEndTimeDate = parseISO(newEndTimeISO);
     toast({
       title: "✅ Consultation Extended!",
-      description: `New end time: ${newEndTime}.`,
+      description: `New end time: ${newEndTimeDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}.`,
     });
+    // Fetch updated details to refresh local state, including the new endDateTimeUTC
     const updatedDetails = await getConsultationDetails(roomName);
     if (updatedDetails) {
       setConsultationDetails(updatedDetails);
@@ -182,6 +187,10 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
       default: return <LogIn className="h-8 w-8 text-primary" />;
     }
   }, [stage]);
+
+  const currentDisplayEndTime = useMemo(() => {
+    return parseISO(consultationDetails.endDateTimeUTC).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  }, [consultationDetails.endDateTimeUTC]);
 
   return (
     <div className="w-full max-w-md md:max-w-2xl lg:max-w-4xl">
@@ -284,7 +293,7 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
 
         </CardContent>
         <CardFooter className="text-xs text-muted-foreground text-center block pt-4">
-          Scheduled: {new Date(date + ' ' + startTime).toLocaleString()} - {new Date(date + ' ' + endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+          Scheduled: {parseISO(consultationDetails.startDateTimeUTC).toLocaleString()} - {parseISO(consultationDetails.endDateTimeUTC).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
         </CardFooter>
       </Card>
 
@@ -292,7 +301,8 @@ export function JoinLobbyClient({ roomName, initialConsultationDetails }: JoinLo
         isOpen={showExtensionModal}
         onClose={() => setShowExtensionModal(false)}
         roomName={roomName}
-        currentEndTime={consultationDetails.endTime}
+        currentEndTime={currentDisplayEndTime} 
+        currentEndTimeUTC={consultationDetails.endDateTimeUTC} // Pass UTC string for internal logic
         onExtensionSuccess={handleExtendSuccess}
       />
     </div>
