@@ -28,8 +28,8 @@ export default function HomePage() {
           <div className="mx-auto bg-primary text-primary-foreground rounded-full p-3 w-fit mb-4">
             <Stethoscope size={32} />
           </div>
-          <CardTitle className="text-3xl font-bold">KMC Telehealth with Doctor kays | Health without boarder</CardTitle>
-          <CardDescription>Doctor kays | Experience reliable and efficient healthcare services with Doctor Kays. Book appointments, consult specialists, and explore personalized solutions.</CardDescription>
+          <CardTitle className="text-3xl font-bold">KMC Telehealth | Health without boarder</CardTitle>
+          <CardDescription>Clinic Online | Experience reliable and efficient healthcare services. Book appointments, consult specialists, and explore personalized solutions.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
