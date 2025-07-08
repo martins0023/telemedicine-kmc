@@ -323,76 +323,116 @@ export function VideoComponentPlaceholder({ roomName, token, identity, isHost, o
   }
 
 
-  return (
-    ‎‎<Card className="w-full min-h-[500px] flex flex-col shadow-lg bg-background"> {/* Ensure card bg for contrast */}
-‎      <CardHeader className="bg-muted/30 p-3 md:p-4 border-b">
-‎        <CardTitle className="text-md md:text-lg text-foreground">Video Consultation: {roomName}</CardTitle>
-‎        <CardDescription className="text-xs md:text-sm text-muted-foreground">You are: <Badge variant={isHost ? "default" : "secondary"}>{identity}</Badge></CardDescription>
-‎      </CardHeader>
-‎      
-‎      <CardContent className="flex-1 p-2 md:p-4 grid grid-rows-[auto_1fr] gap-2 md:gap-4 overflow-hidden">
-‎        {/* Local video area */}
-‎        <div className="row-start-1 rounded-lg bg-foreground/10 flex items-center justify-center aspect-video relative overflow-hidden min-h-[150px] shadow-inner">
-‎          <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-‎          {(isVidOff || !hasCameraPermission) && (
-‎             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
-‎                <CameraOff size={48} className="text-white/80" />
-‎                <p className="text-white/80 text-sm mt-2">
-‎                  {hasCameraPermission === false ? "Camera access denied" : "Your video is off"}
-‎                </p>
-‎            </div>
-‎          )}
-‎          <Badge className="absolute bottom-2 left-2 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded">{identity} (You)</Badge>
-‎        </div>
-‎        
-‎        {/* Remote participants grid */}
-‎        <div ref={remoteVideosRef} className="row-start-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-4 overflow-y-auto pb-2">
-‎          {/* Remote videos will be appended here by handleTrackSubscribed */}
-‎          {Array.from(remoteParticipants.values()).length === 0 && !isConnecting && room && (
-‎             <div className="col-span-full flex flex-col items-center justify-center text-muted-foreground h-full min-h-[100px] p-4 rounded-md bg-muted/20">
-‎                <Users size={48} className="mb-2"/>
-‎                <p>Waiting for others to join...</p>
-‎                <p className="text-xs">Only connected participants will appear here.</p>
-‎            </div>
-‎          )}
-‎           {!room && !isConnecting && (
-‎             <div className="col-span-full flex flex-col items-center justify-center text-destructive h-full min-h-[100px] p-4 rounded-md bg-destructive/10">
-‎                <AlertTriangle size={48} className="mb-2"/>
-‎                <p>Not connected to the call.</p>
-‎                <p className="text-xs">There might be an issue with the connection or token.</p>
-‎            </div>
-‎           )}
-‎        </div>
+  ‎return (
+‎    <Card className="w-full h-full flex flex-col">
+‎      <CardHeader>
+‎        <div>
+‎          <CardTitle className="text-lg">
+‎            🎥 {roomName}
+‎          </CardTitle>
+‎          <CardDescription className="mt-1 text-xs">
+‎            You are{" "}
+‎            <Badge variant={isHost ? "default" : "secondary"}>
+‎              {identity}
+‎            </Badge>
+‎          </CardDescription>
+‎        </div>
+‎        <Button
+‎          variant="destructive"
+‎          size="icon"
+‎          onClick={handleLeaveRoom}
+‎          aria-label="Leave call"
+‎        >
+‎          <PhoneOff />
+‎        </Button>
+‎      </CardHeader>
 ‎
-‎         {hasCameraPermission === false && ( // Persistent banner if permissions were denied
-‎            <Alert variant="destructive" className="row-start-3 col-span-full mt-2">
-‎              <AlertTriangle className="h-4 w-4" />
-‎              <AlertTitle>Camera/Microphone Access Denied</AlertTitle>
-‎              <AlertDescription>
-‎                Video and audio sharing is disabled. Please enable permissions in your browser settings and refresh the page.
-‎              </AlertDescription>
-‎            </Alert>
-‎          )}
+‎      <CardContent className="grid flex-1 grid-rows-[auto_1fr] gap-4 p-4 overflow-hidden">
+‎        {/* Local preview */}
+‎        <div className="relative rounded-lg overflow-hidden shadow-inner bg-foreground/10 aspect-video">
+‎          <video
+‎            ref={localVideoRef}
+‎            autoPlay
+‎            muted
+‎            playsInline
+‎            className="w-full h-full object-cover"
+‎          />
+‎          {(isVidOff || !hasCameraPermission) && (
+‎            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
+‎              <CameraOff size={40} className="text-white/80" />
+‎              <p className="mt-2 text-white/80 text-sm">
+‎                {hasCameraPermission === false
+‎                  ? "Camera denied"
+‎                  : "Video is off"}
+‎              </p>
+‎            </div>
+‎          )}
+‎          <Badge className="absolute top-2 left-2 text-xs bg-black/60 text-white">
+‎            You
+‎          </Badge>
+‎        </div>
 ‎
-‎      </CardContent>
-‎      <div className="p-3 md:p-4 border-t bg-muted/30 flex justify-center items-center space-x-2 md:space-x-4">
-‎        <Button variant="outline" size="icon" onClick={toggleMute} aria-label={isMicMuted ? "Unmute Microphone" : "Mute Microphone"} disabled={!room || !localAudioTrack || hasCameraPermission === false}>
-‎          {isMicMuted ? <MicOff /> : <Mic />}
-‎        </Button>
-‎        <Button variant="outline" size="icon" onClick={toggleVideo} aria-label={isVidOff ? "Start Video" : "Stop Video"} disabled={!room || hasCameraPermission === false}>
-‎          {isVidOff ? <VideoOff /> : <Video />}
-‎        </Button>
-‎        {/* Placeholder buttons - implement functionality as needed */}
-‎        <Button variant="outline" size="icon" aria-label="Show Participants (Placeholder)" disabled={!room}>
-‎          <Users />
-‎        </Button>
-‎        <Button variant="outline" size="icon" aria-label="Open Chat (Placeholder)" disabled={!room}>
-‎          <MessageSquare />
-‎        </Button>
-‎        <Button variant="destructive" size="icon" onClick={handleLeaveRoom} aria-label="Leave Call" disabled={!room && !isConnecting}>
-‎          <PhoneOff />
-‎        </Button>
-‎      </div>
-‎    </Card> 
-  );
-}
+‎        {/* Remote participants */}
+‎        <div
+‎          ref={remoteVideosRef}
+‎          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto"
+‎        >
+‎          {room && remoteParticipants.size === 0 && (
+‎            <div className="col-span-full flex flex-col items-center justify-center p-6 text-muted-foreground bg-muted/20 rounded-lg">
+‎              <Users size={48} className="mb-2" />
+‎              <p>Waiting for others to join…</p>
+‎            </div>
+‎          )}
+‎          {!room && (
+‎            <div className="col-span-full flex flex-col items-center justify-center p-6 text-destructive bg-destructive/10 rounded-lg">
+‎              <AlertTriangle size={48} className="mb-2" />
+‎              <p>Not connected to the call.</p>
+‎            </div>
+‎          )}
+‎        </div>
+‎
+‎        {hasCameraPermission === false && (
+‎          <Alert variant="destructive" className="mt-4">
+‎            <AlertTriangle className="h-4 w-4" />
+‎            <AlertTitle>Permissions Denied</AlertTitle>
+‎            <AlertDescription>
+‎              Enable camera/microphone in your browser and refresh.
+‎            </AlertDescription>
+‎          </Alert>
+‎        )}
+‎      </CardContent>
+‎
+‎      {/* Floating control bar */}
+‎      <div className="flex items-center justify-center space-x-4 p-3 bg-muted/20 border-t rounded-b-2xl">
+‎        <Button
+‎          variant="outline"
+‎          size="icon"
+‎          onClick={toggleMute}
+‎          aria-label={isMicMuted ? "Unmute" : "Mute"}
+‎        >
+‎          {isMicMuted ? <MicOff /> : <Mic />}
+‎        </Button>
+‎        <Button
+‎          variant="outline"
+‎          size="icon"
+‎          onClick={toggleVideo}
+‎          aria-label={isVidOff ? "Start Video" : "Stop Video"}
+‎        >
+‎          {isVidOff ? <VideoOff /> : <Video />}
+‎        </Button>
+‎        <Button
+‎          variant="outline"
+‎          size="icon"
+‎          disabled
+‎          aria-label="Participants"
+‎        >
+‎          <Users />
+‎        </Button>
+‎        <Button variant="outline" size="icon" disabled aria-label="Chat">
+‎          <MessageSquare />
+‎        </Button>
+‎      </div>
+‎    </Card>
+‎  );
+‎}
+‎
